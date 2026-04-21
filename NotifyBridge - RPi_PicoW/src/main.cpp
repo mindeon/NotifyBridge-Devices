@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 
 // ── Configuration ─────────────────────────────────────────────────────────────
@@ -147,9 +148,12 @@ bool postNotification(const String& message, int priority = 0) {
   setLedMode(LED_SENDING);
   unsigned long backoff = 2000;
 
+  WiFiClientSecure client;
+  client.setInsecure();
+
   for (int attempt = 1; attempt <= POST_MAX_RETRIES; attempt++) {
     HTTPClient http;
-    http.begin("https://notifybridge.mindeon.net/v1/messages/send");
+    http.begin(client, "https://notifybridge.mindeon.net/v1/messages/send");
     http.addHeader("Content-Type", "application/json");
 
     int code = http.POST(payload);

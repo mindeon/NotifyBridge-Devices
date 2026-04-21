@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include "hardware/adc.h"
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 #define WIFI_SSID             "neuralis"
@@ -17,6 +18,14 @@
 #define BOOT_BUTTON_PIN       15          // GP15 — wire a button between GP15 and GND
 #define LED_PIN               (64u)       // onboard LED via CYW43 chip (rpipico2w variant maps LED_BUILTIN to GP25 which is unconnected)
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ── RP2350 on-chip temperature sensor ────────────────────────────────────────
+float readChipTemp() {
+  adc_select_input(4);
+  uint16_t raw = adc_read();
+  float v = raw * (3.3f / 4096.0f);
+  return 27.0f - (v - 0.706f) / 0.001721f;
+}
 
 // ── LED state machine ─────────────────────────────────────────────────────────
 enum LedMode { LED_CONNECTING, LED_IDLE, LED_SENDING, LED_DISCONNECTED };
@@ -179,12 +188,14 @@ bool postNotification(const String& message, int priority = 0) {
 // ── Heartbeat ─────────────────────────────────────────────────────────────────
 void sendHeartbeat() {
   unsigned long sec = millis() / 1000;
-  char msg[180];
+  float temp = readChipTemp();
+  char msg[220];
   snprintf(msg, sizeof(msg),
-    "Heartbeat | uptime %luh %02lum %02lus | RSSI %d dBm | IP %s",
+    "Heartbeat | uptime %luh %02lum %02lus | RSSI %d dBm | IP %s | chip %.1fC",
     sec / 3600, (sec % 3600) / 60, sec % 60,
     WiFi.RSSI(),
-    WiFi.localIP().toString().c_str());
+    WiFi.localIP().toString().c_str(),
+    temp);
 
   postNotification(msg, -1);
 }
@@ -200,6 +211,9 @@ static unsigned long lastHeartbeatMs = 0;
 
 void setup() {
   Serial.begin(115200);
+
+  adc_init();
+  adc_set_temp_sensor_enabled(true);
 
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);

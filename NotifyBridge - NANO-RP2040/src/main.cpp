@@ -12,24 +12,33 @@
 #define NB_USER_KEY           "YOUR_USER_KEY"
 #define NB_DEVICE_CODE        "YOUR_DEVICE_CODE"
 
-#define HEARTBEAT_INTERVAL_MS (1UL * 60 * 60 * 1000)
-#define WIFI_RETRY_INTERVAL   30000UL
-#define WIFI_CONNECT_TIMEOUT  30000UL
-#define POST_MAX_RETRIES      5
+#define HEARTBEAT_INTERVAL_MS  (1UL * 60 * 60 * 1000)
+#define WIFI_RETRY_INTERVAL    30000UL
+#define WIFI_CONNECT_TIMEOUT   30000UL
+#define POST_MAX_RETRIES       5
 
 #define NB_HOST "notifybridge.mindeon.net"
 #define NB_PORT 443
 #define NB_PATH "/v1/messages/send"
 
-// ── Alert thresholds ──────────────────────────────────────────────────────────
-// Accel: alert when the sudden CHANGE from baseline exceeds this (not absolute G)
-#define JOLT_DELTA_G          0.4f   // G-force change from rolling average
-// Noise: alert when RMS is this many times above the ambient baseline
-#define NOISE_SPIKE_FACTOR    4.0f   // e.g. 4x ambient triggers alert
-#define NOISE_MIN_RMS         150.0f // ignore anything below this (mic noise floor)
-// Cooldown between repeated alerts of the same type
+// ── Single-event alert thresholds ─────────────────────────────────────────────
+#define JOLT_DELTA_G          0.4f    // sudden single change → "Vibration detected"
+#define NOISE_SPIKE_FACTOR    20.0f    // Nx above ambient → "Sudden noise"
+#define NOISE_MIN_RMS         150.0f  // mic noise floor
 #define ALERT_COOLDOWN_MS     10000UL
-// Debug print interval
+
+// ── Earthquake detection ───────────────────────────────────────────────────────
+// Accel: count micro-jolts in a rolling window — earthquakes cause sustained
+// low-frequency oscillation (1–5 Hz), not just a single spike.
+#define QUAKE_JOLT_DELTA_G    0.15f   // smaller delta used only for quake counter
+#define QUAKE_MIN_JOLTS       5       // micro-jolts in window to flag sustained vibration
+#define QUAKE_WINDOW_MS       5000UL  // rolling window for jolt counting
+// Combined: both sustained vibration AND a noise spike must happen within this
+// window to trigger the earthquake alert.
+#define QUAKE_COINCIDENCE_MS  15000UL
+#define QUAKE_COOLDOWN_MS     120000UL // 2 min between quake alerts
+
+// ── Misc ──────────────────────────────────────────────────────────────────────
 #define DEBUG_PRINT_INTERVAL  2000UL
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -51,30 +60,19 @@ void updateLed() {
 
   switch (ledMode) {
     case LED_CONNECTING:
-      if (now - lastToggleMs >= 100) {
-        ledOn = !ledOn; writeLed(ledOn); lastToggleMs = now;
-      }
+      if (now - lastToggleMs >= 100) { ledOn = !ledOn; writeLed(ledOn); lastToggleMs = now; }
       break;
     case LED_DISCONNECTED:
-      if (now - lastToggleMs >= 500) {
-        ledOn = !ledOn; writeLed(ledOn); lastToggleMs = now;
-      }
+      if (now - lastToggleMs >= 500) { ledOn = !ledOn; writeLed(ledOn); lastToggleMs = now; }
       break;
     case LED_SENDING:
       if (blinkCount < 6) {
-        if (now - lastToggleMs >= 50) {
-          ledOn = !ledOn; writeLed(ledOn); lastToggleMs = now; blinkCount++;
-        }
-      } else {
-        blinkCount = 0; setLedMode(LED_IDLE);
-      }
+        if (now - lastToggleMs >= 50) { ledOn = !ledOn; writeLed(ledOn); lastToggleMs = now; blinkCount++; }
+      } else { blinkCount = 0; setLedMode(LED_IDLE); }
       break;
     case LED_IDLE:
-      if (!ledOn && now - lastToggleMs >= 3000) {
-        ledOn = true; writeLed(true); lastToggleMs = now;
-      } else if (ledOn && now - lastToggleMs >= 50) {
-        ledOn = false; writeLed(false); lastToggleMs = now;
-      }
+      if (!ledOn && now - lastToggleMs >= 3000)      { ledOn = true;  writeLed(true);  lastToggleMs = now; }
+      else if (ledOn && now - lastToggleMs >= 50)    { ledOn = false; writeLed(false); lastToggleMs = now; }
       break;
   }
 }
@@ -102,7 +100,6 @@ void onPDMdata() {
   pdmSamplesReady = bytes / 2;
 }
 
-// Returns RMS of the latest PDM buffer if new data is available, else -1.
 float pollNoiseRMS() {
   if (pdmSamplesReady == 0) return -1.0f;
   int n = pdmSamplesReady;
@@ -125,9 +122,7 @@ void connectWiFi() {
       setLedMode(LED_DISCONNECTED);
       return;
     }
-    updateLed();
-    delay(100);
-    Serial.print(".");
+    updateLed(); delay(100); Serial.print(".");
   }
   char buf[48];
   snprintf(buf, sizeof(buf), "\nConnected  RSSI: %d dBm", WiFi.RSSI());
@@ -149,9 +144,7 @@ bool ensureWiFi() {
 
   unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
-    updateLed();
-    delay(100);
-    Serial.print(".");
+    updateLed(); delay(100); Serial.print(".");
   }
 
   if (WiFi.status() == WL_CONNECTED) {
@@ -161,7 +154,6 @@ bool ensureWiFi() {
     setLedMode(LED_IDLE);
     return true;
   }
-
   Serial.println("\nReconnect failed — will retry later");
   setLedMode(LED_DISCONNECTED);
   return false;
@@ -169,10 +161,7 @@ bool ensureWiFi() {
 
 // ── HTTP POST with exponential backoff ────────────────────────────────────────
 bool postNotification(const String& message, int priority = 0) {
-  if (!ensureWiFi()) {
-    Serial.println("No WiFi — notification dropped");
-    return false;
-  }
+  if (!ensureWiFi()) { Serial.println("No WiFi — notification dropped"); return false; }
 
   String payload =
     String("{") +
@@ -202,7 +191,6 @@ bool postNotification(const String& message, int priority = 0) {
       setLedMode(LED_IDLE);
       return (code >= 200 && code < 300);
     }
-
     char buf[64];
     snprintf(buf, sizeof(buf), "Attempt %d/%d failed (err %d) — retry in %lums",
              attempt, POST_MAX_RETRIES, err, backoff);
@@ -211,7 +199,6 @@ bool postNotification(const String& message, int priority = 0) {
     delay(backoff);
     backoff = min(backoff * 2, 60000UL);
   }
-
   Serial.println("All retries exhausted");
   setLedMode(LED_IDLE);
   return false;
@@ -231,14 +218,31 @@ void sendHeartbeat(float accelBase, float noiseBase) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Rolling jolt timestamps for earthquake sustained-vibration detection
+static unsigned long joltTs[16];
+static int           joltHead  = 0;
+static int           joltTotal = 0; // saturates at 16
+
 static unsigned long lastHeartbeatMs  = 0;
 static unsigned long lastJoltAlertMs  = 0;
 static unsigned long lastNoiseAlertMs = 0;
+static unsigned long lastQuakeAlertMs = 0;
 static unsigned long lastDebugPrintMs = 0;
+static unsigned long lastNoiseSpikeMs = 0;  // last time noise spike was detected
+static unsigned long lastVibMs        = 0;  // last time sustained vibration was detected
 
-// Exponential moving averages — initialised on first real reading
-static float accelEMA = -1.0f;  // -1 = not yet seeded
+static float accelEMA = -1.0f;
 static float noiseEMA = -1.0f;
+
+// Count jolt timestamps that fall within the rolling quake window
+int countRecentJolts(unsigned long now) {
+  int count = 0;
+  int n = min(joltTotal, 16);
+  for (int i = 0; i < n; i++) {
+    if (now - joltTs[i] <= QUAKE_WINDOW_MS) count++;
+  }
+  return count;
+}
 
 void setup() {
   Serial.begin(115200);
@@ -248,10 +252,9 @@ void setup() {
   pinMode(STATUS_LED, OUTPUT);
   writeLed(false);
 
-  if (!IMU.begin())  Serial.println("IMU init failed");
-
+  if (!IMU.begin())            Serial.println("IMU init failed");
   PDM.onReceive(onPDMdata);
-  if (!PDM.begin(1, 16000)) Serial.println("PDM init failed");
+  if (!PDM.begin(1, 16000))   Serial.println("PDM init failed");
 
   connectWiFi();
   postNotification("Device is alive");
@@ -262,14 +265,14 @@ void loop() {
   updateLed();
   unsigned long now = millis();
 
-  // ── Accelerometer jolt detection ─────────────────────────────────────────────
+  // ── Accelerometer ─────────────────────────────────────────────────────────────
   float mag = readAccelMagnitude();
   if (mag > 0) {
-    if (accelEMA < 0) accelEMA = mag;  // seed on first reading
+    if (accelEMA < 0) accelEMA = mag;
     float delta = abs(mag - accelEMA);
-    // Update EMA after computing delta so we compare against the stable baseline
     accelEMA = 0.8f * accelEMA + 0.2f * mag;
 
+    // Single jolt alert
     if (delta > JOLT_DELTA_G && now - lastJoltAlertMs > ALERT_COOLDOWN_MS) {
       char msg[80];
       snprintf(msg, sizeof(msg), "Vibration detected! delta: %.2fG (base: %.2fG)", delta, accelEMA);
@@ -277,35 +280,71 @@ void loop() {
       postNotification(msg, 2);
       lastJoltAlertMs = millis();
     }
+
+    // Record micro-jolts for quake sustained-vibration counter
+    if (delta > QUAKE_JOLT_DELTA_G) {
+      joltTs[joltHead] = now;
+      joltHead = (joltHead + 1) % 16;
+      if (joltTotal < 16) joltTotal++;
+    }
   }
 
-  // ── Noise spike detection (non-blocking — processes buffer as it arrives) ────
+  // ── Noise ─────────────────────────────────────────────────────────────────────
   float rms = pollNoiseRMS();
+  bool noiseSpikeNow = false;
   if (rms >= 0) {
-    if (noiseEMA < 0) noiseEMA = rms;  // seed on first reading
+    if (noiseEMA < 0) noiseEMA = rms;
     float spike = (noiseEMA > 1.0f) ? rms / noiseEMA : 0;
-    // Update baseline slowly so spikes don't shift it
     noiseEMA = 0.95f * noiseEMA + 0.05f * rms;
 
-    if (rms > NOISE_MIN_RMS && spike > NOISE_SPIKE_FACTOR
-        && now - lastNoiseAlertMs > ALERT_COOLDOWN_MS) {
-      char msg[80];
-      snprintf(msg, sizeof(msg), "Sudden noise! level: %.0f (%.1fx above ambient)", rms, spike);
-      Serial.println(msg);
-      postNotification(msg, 2);
-      lastNoiseAlertMs = millis();
+    if (rms > NOISE_MIN_RMS && spike > NOISE_SPIKE_FACTOR) {
+      noiseSpikeNow = true;
+      lastNoiseSpikeMs = now;
+      if (now - lastNoiseAlertMs > ALERT_COOLDOWN_MS) {
+        char msg[80];
+        snprintf(msg, sizeof(msg), "Sudden noise! level: %.0f (%.1fx above ambient)", rms, spike);
+        Serial.println(msg);
+        postNotification(msg, 2);
+        lastNoiseAlertMs = millis();
+      }
     }
+  }
+
+  // ── Earthquake detection ──────────────────────────────────────────────────────
+  // Condition: sustained vibration (5+ micro-jolts in 5 s) AND a noise spike
+  // both occurred within QUAKE_COINCIDENCE_MS of each other.
+  int recentJolts = countRecentJolts(now);
+  bool sustainedVib = (recentJolts >= QUAKE_MIN_JOLTS);
+  if (sustainedVib) lastVibMs = now;
+
+  bool noiseRecent = (now - lastNoiseSpikeMs <= QUAKE_COINCIDENCE_MS);
+  bool vibRecent   = (now - lastVibMs        <= QUAKE_COINCIDENCE_MS);
+
+  if (noiseRecent && vibRecent && now - lastQuakeAlertMs > QUAKE_COOLDOWN_MS) {
+    char msg[120];
+    snprintf(msg, sizeof(msg),
+      "EARTHQUAKE detected! jolts: %d in 5s | noise: %.0f | accel_base: %.2fG",
+      recentJolts, (rms >= 0 ? rms : 0), accelEMA);
+    Serial.println(msg);
+    postNotification(msg, 2);
+    lastQuakeAlertMs = millis();
+    // Reset quake state so it doesn't re-fire immediately
+    lastNoiseSpikeMs = 0;
+    lastVibMs        = 0;
+    joltTotal        = 0;
   }
 
   // ── Debug print ───────────────────────────────────────────────────────────────
   if (now - lastDebugPrintMs >= DEBUG_PRINT_INTERVAL) {
     lastDebugPrintMs = now;
-    float delta2 = (accelEMA >= 0) ? abs(mag - accelEMA) : 0;
-    char dbg[100];
+    char dbg[120];
     snprintf(dbg, sizeof(dbg),
-      "accel: %.2fG delta: %.2f (thr %.1f) | noise: %.0f base: %.0f (thr x%.0f)",
-      mag, delta2, JOLT_DELTA_G,
-      (rms >= 0 ? rms : 0), (noiseEMA >= 0 ? noiseEMA : 0), NOISE_SPIKE_FACTOR);
+      "accel: %.2fG base: %.2f | noise: %.0f base: %.0f | jolts/5s: %d | vib: %s noise: %s",
+      mag, accelEMA,
+      (rms >= 0 ? rms : 0), (noiseEMA >= 0 ? noiseEMA : 0),
+      recentJolts,
+      vibRecent  ? "Y" : "n",
+      noiseRecent ? "Y" : "n");
     Serial.println(dbg);
   }
 

@@ -13,8 +13,8 @@
 #define HEARTBEAT_INTERVAL_MS (1UL * 60 * 60 * 1000)
 #define WIFI_RETRY_INTERVAL   30000UL
 #define POST_MAX_RETRIES      5
-#define BOOT_BUTTON_PIN       0
-#define LED_PIN               13   // built-in LED on ESP32 boards huzzah32-13, 
+#define BOOT_BUTTON_PIN       13   // S1 button on pycom, adjust if using a different board
+#define LED_PIN               16   // built-in LED on ESP32 boards huzzah32-13, 
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── LED state machine ─────────────────────────────────────────────────────────

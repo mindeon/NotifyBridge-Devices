@@ -16,7 +16,7 @@
 #define NB_USER_KEY           "YOUR_USER_KEY"
 #define NB_DEVICE_CODE        "YOUR_DEVICE_CODE"
 
-#define HEARTBEAT_INTERVAL_MS (1UL * 60 * 60 * 1000)
+#define HEARTBEAT_INTERVAL_MS (30UL * 60 * 1000)
 #define WIFI_RETRY_INTERVAL   30000UL
 #define POST_MAX_RETRIES      5
 
@@ -157,6 +157,8 @@ bool ensureWiFi() {
   return false;
 }
 
+bool readAllSensors(char* buf, size_t len); // forward declaration
+
 // ── HTTP POST ─────────────────────────────────────────────────────────────────
 bool postNotification(const String& message, int priority = 0) {
   Serial.printf("[POST] Sending: \"%s\" (priority %d)\n", message.c_str(), priority);
@@ -207,12 +209,15 @@ bool postNotification(const String& message, int priority = 0) {
 // ── Heartbeat ─────────────────────────────────────────────────────────────────
 void sendHeartbeat() {
   unsigned long sec = millis() / 1000;
-  char msg[180];
+  char sensorData[256];
+  readAllSensors(sensorData, sizeof(sensorData));
+
+  char msg[380];
   snprintf(msg, sizeof(msg),
-    "Heartbeat | uptime %luh %02lum %02lus | RSSI %d dBm | IP %s",
+    "Heartbeat | uptime %luh %02lum %02lus | RSSI %d dBm | %s",
     sec / 3600, (sec % 3600) / 60, sec % 60,
     WiFi.RSSI(),
-    WiFi.localIP().toString().c_str());
+    sensorData);
   Serial.printf("[HB] %s\n", msg);
   postNotification(msg, -1);
 }

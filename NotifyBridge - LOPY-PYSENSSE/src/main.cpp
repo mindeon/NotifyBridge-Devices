@@ -28,7 +28,7 @@
 #define PRES_LOW_HPA       970.0f
 #define LIGHT_HIGH_LUX   10000.0f
 #define ACCEL_QUAKE_G       0.20f   // deviation from 1g to count as shaking
-#define ACCEL_QUAKE_SAMPLES     5   // consecutive samples needed (~500ms)
+#define ACCEL_QUAKE_SAMPLES     3   // consecutive samples needed (~300ms)
 #define ALERT_COOLDOWN_MS  (5UL * 60 * 1000)
 #define SENSOR_CHECK_MS     (1UL * 60 * 1000)
 
@@ -244,10 +244,11 @@ void checkSensorThresholds() {
   snprintf(uptime, sizeof(uptime), "%luh %02lum %02lus",
            sec / 3600, (sec % 3600) / 60, sec % 60);
 
-  static unsigned long lastAlertTempMs  = 0;
-  static unsigned long lastAlertHumMs   = 0;
-  static unsigned long lastAlertPresMs  = 0;
-  static unsigned long lastAlertLightMs = 0;
+  // Initialised to 0UL-ALERT_COOLDOWN_MS so the first check fires immediately
+  static unsigned long lastAlertTempMs  = 0UL - ALERT_COOLDOWN_MS;
+  static unsigned long lastAlertHumMs   = 0UL - ALERT_COOLDOWN_MS;
+  static unsigned long lastAlertPresMs  = 0UL - ALERT_COOLDOWN_MS;
+  static unsigned long lastAlertLightMs = 0UL - ALERT_COOLDOWN_MS;
 
   if (rhReady) {
     float t = rh.readTemperature();
@@ -483,7 +484,7 @@ void loop() {
   // Earthquake detection — runs every loop iteration (~100ms)
   if (lisReady) {
     static int           quakeSamples     = 0;
-    static unsigned long lastQuakeAlertMs = 0;
+    static unsigned long lastQuakeAlertMs = 0UL - ALERT_COOLDOWN_MS;
     float x, y, z;
     lis.getAccel(&x, &y, &z);
     float mag = sqrtf(x*x + y*y + z*z);

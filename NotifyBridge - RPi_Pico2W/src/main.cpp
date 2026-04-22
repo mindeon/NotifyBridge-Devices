@@ -5,7 +5,7 @@
 #include "hardware/adc.h"
 
 // ── Configuration ─────────────────────────────────────────────────────────────
-#define WIFI_SSID             "neuralis"
+#define WIFI_SSID             "YOUR_WIFI_SSID"
 #define WIFI_PASSWORD         "YOUR_WIFI_PASSWORD"
 
 #define NB_API_TOKEN          "YOUR_API_TOKEN"

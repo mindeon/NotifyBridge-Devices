@@ -169,10 +169,11 @@ void updateLed() {
         setLedMode(LED_IDLE);
       }
       break;
-    case LED_IDLE:
+    case LED_IDLE: {
+      uint32_t idleColor = gps.location.isValid() ? GREEN : BLUE;
       if (!ledOn && now - lastToggleMs >= 3000) {
         ledOn = true;
-        led.setPixelColor(0, GREEN);
+        led.setPixelColor(0, idleColor);
         led.show();
         lastToggleMs = now;
       } else if (ledOn && now - lastToggleMs >= 50) {
@@ -182,6 +183,7 @@ void updateLed() {
         lastToggleMs = now;
       }
       break;
+    }
   }
 }
 

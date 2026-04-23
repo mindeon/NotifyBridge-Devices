@@ -13,6 +13,8 @@ This repository contains PlatformIO-based Arduino projects for popular microcont
 | Arduino Nano RP2040 Connect | RP2040 | arduino_nano_connect | IMU, microphone, earthquake detection |
 | Raspberry Pi Pico W | RP2040 (WiFi) | rpipicow | Lightweight, button input |
 | Raspberry Pi Pico 2W | RP2350 (WiFi) | rpipico2w | On-chip temperature sensor |
+| LoPy4 + PySense | Espressif ESP32 | lopy4 | Temperature, humidity, pressure, light, accelerometer, earthquake detection |
+| LoPy4 + PyTrack | Espressif ESP32 | lopy4 | GPS tracking, speed alerts, accelerometer, earthquake detection |
 
 ## Prerequisites
 
@@ -23,7 +25,7 @@ This repository contains PlatformIO-based Arduino projects for popular microcont
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/your-username/NotifyBridge-Devices.git
+   git clone https://github.com/mindeon/NotifyBridge-Devices.git
    cd NotifyBridge-Devices
    ```
 
@@ -33,6 +35,8 @@ This repository contains PlatformIO-based Arduino projects for popular microcont
    - `NotifyBridge - NANO-RP2040/`
    - `NotifyBridge - RPi_PicoW/`
    - `NotifyBridge - RPi_Pico2W/`
+   - `NotifyBridge - LOPY-PYSENSSE/`
+   - `NotifyBridge - LOPY-PYTRACK/`
 
 3. In `src/main.cpp`, replace the placeholder values in the configuration block at the top of the file:
    ```cpp
@@ -65,7 +69,13 @@ NotifyBridge-Devices/
 ├── NotifyBridge - RPi_PicoW/       # Raspberry Pi Pico W firmware
 │   ├── platformio.ini
 │   └── src/main.cpp
-└── NotifyBridge - RPi_Pico2W/      # Raspberry Pi Pico 2W firmware
+├── NotifyBridge - RPi_Pico2W/      # Raspberry Pi Pico 2W firmware
+│   ├── platformio.ini
+│   └── src/main.cpp
+├── NotifyBridge - LOPY-PYSENSSE/   # LoPy4 + PySense firmware
+│   ├── platformio.ini
+│   └── src/main.cpp
+└── NotifyBridge - LOPY-PYTRACK/    # LoPy4 + PyTrack firmware
     ├── platformio.ini
     └── src/main.cpp
 ```
@@ -130,6 +140,66 @@ Identical to the Pico W with one addition:
 
 - **On-chip temperature sensor** (RP2350 ADC channel 4) — chip temperature included in every heartbeat message
 - LED mapped to GPIO 64 (CYW43 chip on Pico 2W variant)
+
+### LoPy4 + PySense
+
+Runs on a [Pycom LoPy4](https://pycom.io/) module mounted on the PySense v1.1 expansion board. Uses the ESP32 Arduino framework via PlatformIO.
+
+#### Sensors
+
+| Sensor | Library | Usage |
+|--------|---------|-------|
+| Si7021 (temp/humidity) | Adafruit Si7021 | Temperature (°C) and relative humidity (%) |
+| MPL3115A2 (pressure) | Adafruit MPL3115A2 | Barometric pressure (hPa) and altitude (m) |
+| LTR329 (light) | Adafruit LTR329 and LTR303 | Ambient light (lux) |
+| LIS2HH12 (accel) | rhio-LIS2HH12 | Acceleration (g), earthquake detection |
+
+#### Alert Thresholds
+
+| Event | Trigger | Priority | Cooldown |
+|-------|---------|----------|----------|
+| High temperature | T > 35 °C | 2 | 5 min |
+| Low temperature | T < 5 °C | 2 | 5 min |
+| High humidity | H > 80 % | 2 | 5 min |
+| Low humidity | H < 20 % | 2 | 5 min |
+| Low pressure | P < 970 hPa | 2 | 5 min |
+| High light | L > 10 000 lux | 2 | 5 min |
+| Earthquake | 3+ consecutive accel deviation > 0.2 g from 1 g | 2 | 5 min |
+| Heartbeat | Every 30 minutes | −1 | — |
+
+- **Button** on GPIO 37 (PySense P14) — sends a priority-1 notification with a full sensor snapshot on press
+- **WS2812B RGB LED** on GPIO 0 (LoPy4 onboard)
+- Uses the native ESP32 `HTTPClient` library for HTTPS POST
+
+---
+
+### LoPy4 + PyTrack
+
+Runs on a [Pycom LoPy4](https://pycom.io/) module mounted on the PyTrack v2.0 expansion board. Uses the ESP32 Arduino framework via PlatformIO.
+
+#### Sensors
+
+| Sensor | Library | Usage |
+|--------|---------|-------|
+| L76GNSS (GPS) | TinyGPSPlus | Position (lat/lon), speed, altitude, satellite count |
+| LIS2HH12 (accel) | rhio-LIS2HH12 | Acceleration (g), earthquake detection |
+
+The L76GNSS communicates over I2C (address `0x10`) rather than UART. GPS time is used to sync the ESP32 RTC via `settimeofday()` on first valid fix; heartbeat timestamps switch from uptime to wall-clock UTC once synced.
+
+#### Alert Thresholds
+
+| Event | Trigger | Priority | Cooldown |
+|-------|---------|----------|----------|
+| High speed | GPS speed > 120 km/h | 2 | 5 min |
+| Earthquake | 3+ consecutive accel deviation > 0.2 g from 1 g | 2 | 5 min |
+| Heartbeat | Every 30 minutes — includes RSSI, sensor snapshot, and position drift | −1 | — |
+
+- **Button** on GPIO 37 (PyTrack P14) — sends a priority-1 notification with timestamp and sensor snapshot on press
+- **WS2812B RGB LED** on GPIO 0 — IDLE state flashes **green** when GPS has a fix, **blue** while waiting for fix
+- **Position drift tracking** — the heartbeat reports maximum drift (metres) and sample count since the last heartbeat
+- Uses the native ESP32 `HTTPClient` library for HTTPS POST
+
+---
 
 ## Shared Behaviour
 

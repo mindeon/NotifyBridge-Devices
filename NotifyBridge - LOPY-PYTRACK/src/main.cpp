@@ -25,6 +25,8 @@
 #define ACCEL_QUAKE_SAMPLES       3 // consecutive samples needed (~300 ms)
 #define ALERT_COOLDOWN_MS  (5UL * 60 * 1000)
 #define SENSOR_CHECK_MS     (1UL * 60 * 1000)
+#define GPS_FIX_TIMEOUT_MS  15000UL  // treat fix as lost after 15 s without update
+#define GPS_STALE_TIMEOUT_MS 60000UL // attempt I2C recovery after 60 s without any NMEA
 
 // LoPy4: onboard WS2812B on GPIO0
 // PyTrack v2.0 button: P14 = GPIO37 (input-only, external pull-up on board)
@@ -93,6 +95,10 @@ static void syncTimeFromGPS() {
     char ts[32]; formatTimestamp(ts, sizeof(ts));
     Serial.printf("[GPS] Clock synced: %s\n", ts);
   }
+}
+
+static inline bool gpsHasFix() {
+  return gps.location.isValid() && gps.location.age() < GPS_FIX_TIMEOUT_MS;
 }
 
 // ── Position drift tracking ───────────────────────────────────────────────────
@@ -170,7 +176,7 @@ void updateLed() {
       }
       break;
     case LED_IDLE: {
-      uint32_t idleColor = gps.location.isValid() ? GREEN : BLUE;
+      uint32_t idleColor = gpsHasFix() ? GREEN : BLUE;
       if (!ledOn && now - lastToggleMs >= 3000) {
         ledOn = true;
         led.setPixelColor(0, idleColor);
@@ -318,6 +324,22 @@ static void feedGPS(unsigned long ms = 100) {
   }
 }
 
+// ── GPS I2C recovery ──────────────────────────────────────────────────────────
+static void initLIS(); // forward declaration
+
+static void tryRecoverGPS() {
+  Wire.beginTransmission(GPS_I2C_ADDR);
+  if (Wire.endTransmission() != 0) {
+    Serial.println("[GPS] I2C lost — reinitializing bus");
+    initLIS(); // reinits Wire bus and reconfigures accelerometer
+    Wire.beginTransmission(GPS_I2C_ADDR);
+    Serial.printf("[GPS] After reinit: %s\n",
+                  Wire.endTransmission() == 0 ? "found" : "still not found");
+  } else {
+    Serial.println("[GPS] I2C OK — waiting for satellite fix");
+  }
+}
+
 // ── I2C scan ──────────────────────────────────────────────────────────────────
 static void scanI2C() {
   Serial.println("[I2C] Scanning bus...");
@@ -403,7 +425,7 @@ bool readAllSensors(char* buf, size_t len) {
 
   // GPS
   feedGPS(200);
-  if (gps.location.isValid()) {
+  if (gpsHasFix()) {
     Serial.printf("[SENSOR] L76GNSS  lat=%.6f lon=%.6f spd=%.1fkm/h alt=%.0fm sats=%d\n",
                   gps.location.lat(), gps.location.lng(),
                   gps.speed.kmph(), gps.altitude.meters(),
@@ -430,7 +452,7 @@ void checkSensorThresholds() {
   static unsigned long lastAlertSpeedMs = 0UL - ALERT_COOLDOWN_MS;
 
   feedGPS(50);
-  if (gps.location.isValid() && gps.speed.isValid()) {
+  if (gpsHasFix() && gps.speed.isValid() && gps.speed.age() < GPS_FIX_TIMEOUT_MS) {
     float spd = gps.speed.kmph();
     if (spd > SPEED_HIGH_KMH && now - lastAlertSpeedMs >= ALERT_COOLDOWN_MS) {
       char ts[32]; formatTimestamp(ts, sizeof(ts));
@@ -484,6 +506,23 @@ void loop() {
   feedGPS(10);
   syncTimeFromGPS();
   if (gps.location.isUpdated()) updateDrift();
+
+  // GPS I2C health — attempt recovery if no NMEA chars for GPS_STALE_TIMEOUT_MS
+  {
+    static uint32_t      prevGPSChars     = 0;
+    static unsigned long lastGPSActivityMs = 0;
+    static bool          gpsActivityInited = false;
+    if (!gpsActivityInited) { lastGPSActivityMs = millis(); gpsActivityInited = true; }
+    uint32_t nowChars = gps.charsProcessed();
+    if (nowChars != prevGPSChars) {
+      prevGPSChars      = nowChars;
+      lastGPSActivityMs = millis();
+    } else if (millis() - lastGPSActivityMs >= GPS_STALE_TIMEOUT_MS) {
+      Serial.println("[GPS] No NMEA for 60 s — checking I2C");
+      tryRecoverGPS();
+      lastGPSActivityMs = millis();
+    }
+  }
 
   updateLed();
 

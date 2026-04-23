@@ -5,6 +5,7 @@
 #include <Wire.h>
 #include <rhio-LIS2HH12.h>
 #include <TinyGPSPlus.h>
+#include <sys/time.h>
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 #define WIFI_SSID             "neuralis"
@@ -42,6 +43,77 @@ static LIS2HH12          lis;
 static TinyGPSPlus       gps;
 
 static bool lisReady = false;
+
+// ── GPS time sync ─────────────────────────────────────────────────────────────
+static bool timeSynced = false;
+
+// Pure integer Unix epoch calculation — verified for 2026-04-23
+static time_t gpsToEpoch(uint16_t year, uint8_t month, uint8_t day,
+                          uint8_t hour, uint8_t minute, uint8_t second) {
+  static const uint16_t dpm[] = {0,31,59,90,120,151,181,212,243,273,304,334};
+  bool leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+
+  // days from 1970-01-01 to Jan 1 of year
+  int32_t y   = year - 1970;
+  int32_t ly  = (year - 1) / 4 - 492      // leap years ÷4  (1969/4=492)
+              - ((year - 1) / 100 - 19)   // minus centuries (1969/100=19)
+              + ((year - 1) / 400 - 4);   // plus 400-cycles (1969/400=4)
+  int32_t days = y * 365 + ly;
+
+  days += dpm[month - 1];
+  if (month > 2 && leap) days++;
+  days += day - 1;
+
+  return (time_t)((int64_t)days * 86400
+                + hour * 3600 + minute * 60 + second);
+}
+
+static void formatTimestamp(char* buf, size_t len) {
+  time_t now = time(nullptr);
+  if (now > 1700000000L) { // RTC is set (> Nov 2023)
+    struct tm* t = gmtime(&now);
+    strftime(buf, len, "%Y-%m-%d %H:%M:%S UTC", t);
+  } else {
+    unsigned long sec = millis() / 1000;
+    snprintf(buf, len, "uptime %luh %02lum %02lus", sec/3600, (sec%3600)/60, sec%60);
+  }
+}
+
+static void syncTimeFromGPS() {
+  if (!gps.time.isValid() || !gps.date.isValid()) return;
+  if (gps.date.year() < 2020) return;
+
+  time_t epoch = gpsToEpoch(gps.date.year(), gps.date.month(), gps.date.day(),
+                             gps.time.hour(), gps.time.minute(), gps.time.second());
+  struct timeval tv = { epoch, 0 };
+  settimeofday(&tv, nullptr);
+
+  if (!timeSynced) {
+    timeSynced = true;
+    char ts[32]; formatTimestamp(ts, sizeof(ts));
+    Serial.printf("[GPS] Clock synced: %s\n", ts);
+  }
+}
+
+// ── Position drift tracking ───────────────────────────────────────────────────
+static double driftRefLat = 0, driftRefLon = 0;
+static bool   driftRefSet  = false;
+static double driftMaxM    = 0;
+static int    driftSamples = 0;
+
+static void updateDrift() {
+  if (!gps.location.isValid()) return;
+  double lat = gps.location.lat();
+  double lon = gps.location.lng();
+  if (!driftRefSet) {
+    driftRefLat = lat; driftRefLon = lon;
+    driftRefSet = true;
+    return;
+  }
+  double d = TinyGPSPlus::distanceBetween(driftRefLat, driftRefLon, lat, lon);
+  if (d > driftMaxM) driftMaxM = d;
+  driftSamples++;
+}
 
 // ── RGB LED ───────────────────────────────────────────────────────────────────
 #define BRIGHTNESS 40
@@ -210,18 +282,24 @@ bool postNotification(const String& message, int priority = 0) {
 
 // ── Heartbeat ─────────────────────────────────────────────────────────────────
 void sendHeartbeat() {
-  unsigned long sec = millis() / 1000;
+  char ts[32];
+  formatTimestamp(ts, sizeof(ts));
+
   char sensorData[256];
   readAllSensors(sensorData, sizeof(sensorData));
 
-  char msg[380];
-  snprintf(msg, sizeof(msg),
-    "Heartbeat | uptime %luh %02lum %02lus | RSSI %d dBm | %s",
-    sec / 3600, (sec % 3600) / 60, sec % 60,
-    WiFi.RSSI(),
-    sensorData);
+  char driftBuf[48] = "";
+  if (driftRefSet && driftSamples > 0)
+    snprintf(driftBuf, sizeof(driftBuf), " | drift:%.1fm(n=%d)", driftMaxM, driftSamples);
+
+  char msg[420];
+  snprintf(msg, sizeof(msg), "%s | RSSI %d dBm | %s%s",
+           ts, WiFi.RSSI(), sensorData, driftBuf);
   Serial.printf("[HB] %s\n", msg);
   postNotification(msg, -1);
+
+  driftMaxM = 0;
+  driftSamples = 0;
 }
 
 // ── GPS feed ──────────────────────────────────────────────────────────────────
@@ -346,10 +424,6 @@ bool readAllSensors(char* buf, size_t len) {
 // ── Sensor threshold checks ───────────────────────────────────────────────────
 void checkSensorThresholds() {
   unsigned long now = millis();
-  unsigned long sec = now / 1000;
-  char uptime[32];
-  snprintf(uptime, sizeof(uptime), "%luh %02lum %02lus",
-           sec / 3600, (sec % 3600) / 60, sec % 60);
 
   static unsigned long lastAlertSpeedMs = 0UL - ALERT_COOLDOWN_MS;
 
@@ -357,9 +431,10 @@ void checkSensorThresholds() {
   if (gps.location.isValid() && gps.speed.isValid()) {
     float spd = gps.speed.kmph();
     if (spd > SPEED_HIGH_KMH && now - lastAlertSpeedMs >= ALERT_COOLDOWN_MS) {
+      char ts[32]; formatTimestamp(ts, sizeof(ts));
       char msg[120];
-      snprintf(msg, sizeof(msg), "Alert | Speed:%.1fkm/h > %.0fkm/h | uptime %s",
-               spd, (double)SPEED_HIGH_KMH, uptime);
+      snprintf(msg, sizeof(msg), "Alert | Speed:%.1fkm/h > %.0fkm/h | %s",
+               spd, (double)SPEED_HIGH_KMH, ts);
       Serial.printf("[ALERT] %s\n", msg);
       postNotification(msg, 2);
       lastAlertSpeedMs = millis();
@@ -405,13 +480,8 @@ void setup() {
 void loop() {
   // Feed GPS continuously so TinyGPS++ parses incoming NMEA sentences
   feedGPS(10);
-
-  static unsigned long gpsLogMs = 0;
-  if (millis() - gpsLogMs >= 10000) {
-    Serial.printf("[GPS] sentences: %u  sats: %d  fix: %d\n",
-                  gps.passedChecksum(), gps.satellites.value(), gps.location.isValid());
-    gpsLogMs = millis();
-  }
+  syncTimeFromGPS();
+  if (gps.location.isUpdated()) updateDrift();
 
   updateLed();
 
@@ -420,11 +490,12 @@ void loop() {
     delay(50);
     if (digitalRead(BOOT_BUTTON_PIN) == LOW) {
       Serial.println("[BTN] Button confirmed — reading sensors");
+      char ts[32]; formatTimestamp(ts, sizeof(ts));
       char sensorData[256];
       readAllSensors(sensorData, sizeof(sensorData));
 
-      char msg[280];
-      snprintf(msg, sizeof(msg), "Sensors | %s", sensorData);
+      char msg[300];
+      snprintf(msg, sizeof(msg), "%s | %s", ts, sensorData);
       postNotification(msg, 1);
     } else {
       Serial.println("[BTN] Spurious interrupt — ignored");
@@ -450,11 +521,10 @@ void loop() {
       if (fabsf(mag - 1.0f) > ACCEL_QUAKE_G) {
         if (++quakeSamples >= ACCEL_QUAKE_SAMPLES &&
             millis() - lastQuakeAlertMs >= ALERT_COOLDOWN_MS) {
-          unsigned long sec = millis() / 1000;
+          char ts[32]; formatTimestamp(ts, sizeof(ts));
           char msg[128];
           snprintf(msg, sizeof(msg),
-            "Alert | Earthquake detected | acc:%.2fg | uptime %luh %02lum %02lus",
-            mag, sec / 3600, (sec % 3600) / 60, sec % 60);
+            "Alert | Earthquake detected | acc:%.2fg | %s", mag, ts);
           Serial.printf("[QUAKE] %s\n", msg);
           postNotification(msg, 2);
           lastQuakeAlertMs = millis();
@@ -472,6 +542,11 @@ void loop() {
     char sensorBuf[256];
     readAllSensors(sensorBuf, sizeof(sensorBuf));
     Serial.printf("[LOG] %s\n", sensorBuf);
+    char dbgTs[32]; formatTimestamp(dbgTs, sizeof(dbgTs));
+    Serial.printf("[GPS] raw=%04d-%02d-%02d %02d:%02d:%02d  synced=%d  fmt=\"%s\"\n",
+                  gps.date.year(), gps.date.month(), gps.date.day(),
+                  gps.time.hour(), gps.time.minute(), gps.time.second(),
+                  timeSynced, dbgTs);
     checkSensorThresholds();
     lastSensorCheckMs = millis();
   }

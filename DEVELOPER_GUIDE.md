@@ -12,8 +12,8 @@ There are two roles in NotifyBridge:
 
 | Role | Who | What they do |
 |---|---|---|
-| **Developer** (Studio mode) | You, the firmware/hardware builder | Create apps, register relays, send notifications |
-| **End User** (Receiver mode) | Your customer | Claims a relay, receives push notifications |
+| **Developer** (Studio mode) | You, the firmware/hardware builder | Create apps, register devices, send notifications |
+| **End User** (Receiver mode) | Your customer | Claims a device, receives push notifications |
 
 The flow is straightforward:
 
@@ -21,13 +21,13 @@ The flow is straightforward:
 You (Developer)                          Your Customer (End User)
 ─────────────────                        ────────────────────────
 1. Create an App in Studio mode
-2. Add a Relay to the app
+2. Add a Device to the app
 3. Get the Device Code (e.g. MS-7F3K-92LM)
 4. Program it into your hardware
    or print it as a QR code
 5. Ship/give the hardware          →     6. Opens NotifyBridge in Receiver mode
                                          7. Scans QR code or enters Device Code
-                                         8. Relay is now linked to their phone
+                                         8. Device is now linked to their phone
 9. Send a push from your hardware  →     10. Notification appears on their phone
 ```
 
@@ -43,25 +43,25 @@ You'll find your **API Token** and **User Key** in the app. You need both to sen
 
 ---
 
-## Step 2: Create Relays
+## Step 2: Create Devices
 
-Each physical unit you build (a sensor, monitor, controller, etc.) needs its own **relay** in NotifyBridge. A relay is a virtual device that connects your hardware to your end users.
+Each physical unit you build (a sensor, monitor, controller, etc.) needs its own **device** in NotifyBridge. A device is a virtual entity that connects your hardware to your end users.
 
 1. Open your app in Studio mode.
 2. Tap on your app name to see its details.
-3. Scroll to the **Relays** section and tap **Add Relay**.
+3. Scroll to the **Devices** section and tap **Add Device**.
 4. Give it a name (e.g. "Greenhouse Sensor #42").
-5. A **Device Code** is generated (format: `XX-XXXX-XXXX`) along with a **QR code**.
+5. A **Device Code** is generated (format: `MS-XXXX-XXXX`) along with a **QR code**.
 
-Save the Device Code. You'll program it into your hardware or include it in your product packaging so your end user can claim the relay on their device.
+Save the Device Code. You'll program it into your hardware or include it in your product packaging so your end user can claim the device on their phone.
 
 ---
 
 ## Step 3: Send Notifications from Your Hardware
 
-Once a user has claimed a relay, you can send push notifications with a single HTTP POST request.
+Once a user has claimed a device, you can send push notifications with a single HTTP POST request.
 
-> **Tip:** In Studio mode, tap any relay to see a ready-to-use cURL command with your credentials pre-filled. Just copy and paste!
+> **Tip:** In Studio mode, tap any device to see a ready-to-use cURL command with your credentials pre-filled. Just copy and paste!
 
 ### API Endpoint
 
@@ -88,9 +88,13 @@ Content-Type: application/json
 |---|---|---|
 | `api_token` | Yes | Your app's API token (found in app details) |
 | `user_key` | Yes | Your account key (found in Settings) |
-| `device_code` | Yes | The relay's device code (e.g. "MS-7F3K-92LM") |
+| `device_code` | Yes* | The device's code (e.g. "MS-7F3K-92LM"). You can also use `relay_id` instead. |
+| `relay_id` | Yes* | Alternative to `device_code`. The internal device ID (e.g. "relay_abc123"). |
 | `message` | Yes | The notification body text |
 | `priority` | No | `-1` Low, `0` Normal (default), `1` High, `2` Emergency |
+| `device_name` | No | Target a specific subscriber device by name (useful for multi-device households) |
+
+*Either `device_code` or `relay_id` is required.
 
 ### Example: ESP32 (Arduino)
 
@@ -146,24 +150,34 @@ requests.post("https://notifybridge.mindeon.net/v1/messages/send", json={
 
 ---
 
+## Push Limits
+
+NotifyBridge includes a monthly push notification limit to prevent abuse and ensure fair usage.
+
+- **Monthly Limit**: 3,000 pushes per month (per account)
+- **Billing**: When a device is claimed by a subscriber, push usage is counted against the **subscriber's** limit, not the developer's
+- **Credits**: Developers can purchase additional push credits through the app if needed
+
+---
+
 ## Step 4: Understanding the Claiming Process
 
 The claiming process connects your hardware to an end user's iPhone. Here's how it works behind the scenes:
 
 ### Developer Side (You)
 
-When you create a relay in Studio mode:
+When you create a device in Studio mode:
 
-1. **Relay Created**: The NotifyBridge backend generates:
+1. **Device Created**: The NotifyBridge backend generates:
    - A unique **Device Code** (e.g., `MS-7F3K-92LM`)
    - A unique **Relay ID** (internal identifier)
    - Status: `UNCLAIMED`
    
-2. **Your User Key Stored**: The relay is associated with **your** User Key (the developer/owner)
+2. **Your User Key Stored**: The device is associated with **your** User Key (the developer/owner)
 
-3. **API Token Linked**: The relay is linked to your app's API Token
+3. **API Token Linked**: The device is linked to your app's API Token
 
-At this point, the relay exists but isn't connected to any subscriber's device. Think of it as a "virtual mailbox" waiting to be claimed.
+At this point, the device exists but isn't connected to any subscriber's phone. Think of it as a "virtual mailbox" waiting to be claimed.
 
 ### What You Do Next
 
@@ -195,12 +209,12 @@ When your customer receives the hardware:
 When they submit the Device Code, here's what happens on the backend:
 
 1. **Backend validates** the Device Code exists and is unclaimed
-2. **Backend updates the relay**:
+2. **Backend updates the device**:
    - Status changes: `UNCLAIMED` → `CLAIMED`
    - Stores the subscriber's User Key in `claimed_by_user_key`
    - Stores the subscriber's Device ID in `claimed_by_device_id`
-3. **Backend returns** the full relay details to the subscriber's app
-4. **Subscriber's app** adds the relay to their "Devices" list
+3. **Backend returns** the full device details to the subscriber's app
+4. **Subscriber's app** adds the device to their "Devices" list
 
 ### Critical Concept: Two User Keys
 
@@ -213,10 +227,10 @@ This is the key to understanding NotifyBridge's architecture:
 
 When you send a notification, you include:
 - **Your** User Key (proves you own the app)
-- **Your** API Token (proves you own the relay)
-- The **Device Code** (specifies which relay)
+- **Your** API Token (proves you own the device)
+- The **Device Code** (specifies which device)
 
-The backend uses the Device Code to look up which subscriber claimed it, then routes the notification to **their** device using **their** User Key.
+The backend uses the Device Code to look up which subscriber claimed it, then routes the notification to **their** phone using **their** User Key.
 
 ### After Claiming: Sending Notifications
 
@@ -226,9 +240,9 @@ Once claimed, your hardware can send notifications:
 curl -X POST https://notifybridge.mindeon.net/v1/messages/send \
   -H "Content-Type: application/json" \
   -d '{
-    "api_token": "YOUR_API_TOKEN",       # Proves you own the relay
+    "api_token": "YOUR_API_TOKEN",       # Proves you own the device
     "user_key": "YOUR_USER_KEY",         # Proves you're the developer
-    "device_code": "MS-7F3K-92LM",       # Specifies the relay
+    "device_code": "MS-7F3K-92LM",       # Specifies the device
     "message": "Temperature alert!"
   }'
 ```
@@ -236,7 +250,7 @@ curl -X POST https://notifybridge.mindeon.net/v1/messages/send \
 The backend:
 1. Validates your API Token and User Key
 2. Looks up which subscriber claimed `MS-7F3K-92LM`
-3. Routes the notification to that subscriber's device via APNs
+3. Routes the notification to that subscriber's phone via APNs
 
 ### Multiple Customers, Same Hardware Design
 
@@ -257,11 +271,11 @@ Your Factory:
 
 Each unit has a **unique Device Code**, but they all authenticate with **your** credentials. The Device Code determines **which customer** gets the notification.
 
-### One Relay, Multiple Subscribers (Groups)
+### One Device, Multiple Subscribers (Groups)
 
-**Important:** A relay can send notifications to **multiple people** at once using the **group** feature.
+**Important:** A device can send notifications to **multiple people** at once using the **group** feature.
 
-When a subscriber claims a relay, they get a **User Key**. They can share this key with others (family members, roommates, team members) who also want to receive notifications from the same device.
+When a subscriber claims a device, they get a **User Key**. They can share this key with others (family members, roommates, team members) who also want to receive notifications from the same hardware.
 
 **Example: Smart Doorbell in a Household**
 
@@ -280,20 +294,20 @@ All 4 people receive doorbell notifications!
 
 **How Subscribers Join a Group:**
 
-1. **Customer A** (first person) claims the relay normally
+1. **Customer A** (first person) claims the device normally
 2. Customer A opens Devices tab → Menu (⋮) → **"Invite to Group"**
 3. A QR code appears with Customer A's User Key
 4. **Customer B** opens NotifyBridge → Receiver mode
 5. Customer B taps **+** → **"Join a Group"**
 6. Customer B scans the QR code (or manually enters the key)
-7. Customer B's device is now linked to the same User Key as Customer A
-8. Both receive notifications when the doorbell (or any other relay claimed by that User Key) sends a push
+7. Customer B's phone is now linked to the same User Key as Customer A
+8. Both receive notifications when the doorbell (or any other device claimed by that User Key) sends a push
 
 **Important Notes:**
 
 - All group members share the **same User Key**
-- All group members see **all relays** claimed under that User Key
-- Any group member can claim new relays, and everyone in the group will see them
+- All group members see **all devices** claimed under that User Key
+- Any group member can claim new devices, and everyone in the group will see them
 - This is perfect for:
   - **Households**: Everyone gets home security alerts
   - **Teams**: All members receive equipment monitoring alerts  
@@ -355,13 +369,13 @@ Developer (You)                    NotifyBridge Backend                End User 
 User Key: DEV-123                                                      User Key: SUB-789
 API Token: TOKEN-ABC                                                   (not yet connected)
                                                                        
-Creates Relay                                                          Hardware arrives
+Creates Device                                                          Hardware arrives
     ↓                                                                      ↓
-Device Code: MS-7F3K              [Relay Table]                       Opens app
+Device Code: MS-7F3K              [Devices Table]                      Opens app
     ↓                             relay_id: R1                         Chooses "Receiver"
 Hardcode in                       device_code: MS-7F3K                     ↓
 ESP32 firmware                    status: UNCLAIMED                   Scans QR code
-    ↓                             owner_key: DEV-123                      ↓
+    ↓                             user_key: DEV-123                      ↓
 Ships to customer    ────────────>api_token: TOKEN-ABC                Taps "Claim"
                                   claimed_by: NULL                         ↓
                                                                        (sends MS-7F3K)
@@ -372,11 +386,11 @@ AFTER CLAIMING
 
 Developer (You)                    NotifyBridge Backend                End User (Customer)
 ─────────────                      ────────────────────                ──────────────────
-                                  [Relay Table]
-                                  relay_id: R1                        Relay appears in
+                                  [Devices Table]
+                                  relay_id: R1                        Device appears in
                                   device_code: MS-7F3K                "Devices" tab
                                   status: CLAIMED          ←──────────    ✓
-                                  owner_key: DEV-123                  
+                                  user_key: DEV-123                  
 Hardware sends:                   api_token: TOKEN-ABC                Ready to receive
 POST /v1/messages/send            claimed_by: SUB-789 ───────────────>notifications
 {                                 device_id: iPhone-456
@@ -385,7 +399,7 @@ POST /v1/messages/send            claimed_by: SUB-789 ────────�
   "device_code": "MS-7F3K",               MS-7F3K?
   "message": "Alert!"                    Answer: SUB-789
 }                                            ↓
-    ↓                                   Route to device
+    ↓                                   Route to phone
     └──────────────────────────────────>iPhone-456 via APNs
                                              ↓
                                         🔔 Push notification

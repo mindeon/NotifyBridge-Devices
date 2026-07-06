@@ -1,8 +1,64 @@
+![PlatformIO](https://img.shields.io/badge/PlatformIO-orange)
+![ESP32](https://img.shields.io/badge/ESP32-blue)
+![Arduino](https://img.shields.io/badge/Arduino-00979D)
+![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-C51A4A)
+![License](https://img.shields.io/github/license/mindeon/NotifyBridge-Devices)
+
 # NotifyBridge Devices
+Turn any microcontroller into a push notification device.
 
-Example device firmware for integrating microcontrollers with the [Mindeon NotifyBridge API](https://www.mindeon.net/api).
+Official PlatformIO examples for integrating **ESP32, Arduino, Raspberry Pi, LoPy4 and other embedded devices** with **NotifyBridge**.
 
-This repository contains PlatformIO-based Arduino projects for popular microcontroller platforms, demonstrating how to connect embedded devices to the NotifyBridge notification service.
+NotifyBridge lets your firmware send **instant push notifications** to Android and iPhone using a simple REST API.
+
+No Firebase SDK.
+No mobile development.
+No notification backend.
+
+Just an HTTPS request.
+
+## What is NotifyBridge?
+
+NotifyBridge is a cloud notification service built specifically for embedded systems and IoT projects.
+
+Instead of building your own notification infrastructure, your device sends a simple HTTPS request and NotifyBridge delivers the notification directly to your users' phones.
+
+Perfect for:
+
+- 🌡 Temperature monitoring
+- 🚨 Motion detection
+- 🔋 Battery monitoring
+- 💧 Water tank monitoring
+- 🌱 Greenhouse automation
+- 📍 GPS tracking
+- 🛰 Remote sensors
+- 🏭 Industrial equipment
+- ⚡ Any device capable of making an HTTPS request
+
+## How it works
+
+```
+Your Device
+(ESP32 / Arduino / Raspberry Pi)
+              │
+              │ HTTPS POST
+              ▼
+      NotifyBridge Cloud
+              │
+              │ Push Notification
+              ▼
+      Android & iPhone
+```
+
+## Useful Links
+
+🌐 Website https://www.mindeon.net
+
+📱 Mobile Apps https://www.mindeon.net/app
+
+📖 REST API https://www.mindeon.net/api
+
+📚 Documentation https://www.mindeon.net/guide
 
 ## Supported Devices
 
@@ -21,37 +77,41 @@ This repository contains PlatformIO-based Arduino projects for popular microcont
 - [PlatformIO](https://platformio.org/) (CLI or VSCode extension)
 - A [Mindeon NotifyBridge](https://www.mindeon.net/api) account with an API token and user key
 
-## Getting Started
+## Quick Start
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/mindeon/NotifyBridge-Devices.git
-   cd NotifyBridge-Devices
-   ```
+Clone the repository
 
-2. Open the project folder for your target device in PlatformIO:
-   - `NotifyBridge - ESP32/`
-   - `NotifyBridge - MKR1010/`
-   - `NotifyBridge - NANO-RP2040/`
-   - `NotifyBridge - RPi_PicoW/`
-   - `NotifyBridge - RPi_Pico2W/`
-   - `NotifyBridge - LOPY-PYSENSSE/`
-   - `NotifyBridge - LOPY-PYTRACK/`
+```bash
+git clone https://github.com/mindeon/NotifyBridge-Devices.git
+cd NotifyBridge-Devices
+```
 
-3. In `src/main.cpp`, replace the placeholder values in the configuration block at the top of the file:
-   ```cpp
-   #define WIFI_SSID      "YOUR_WIFI_SSID"
-   #define WIFI_PASSWORD  "YOUR_WIFI_PASSWORD"
+Open the project for your board:
 
-   #define NB_API_TOKEN   "YOUR_API_TOKEN"
-   #define NB_USER_KEY    "YOUR_USER_KEY"
-   #define NB_DEVICE_CODE "YOUR_DEVICE_CODE"
-   ```
+- NotifyBridge - ESP32
+- NotifyBridge - MKR1010
+- NotifyBridge - NANO-RP2040
+- NotifyBridge - RPi_PicoW
+- NotifyBridge - RPi_Pico2W
+- NotifyBridge - LOPY-PYSENSE
+- NotifyBridge - LOPY-PYTRACK
 
-4. Build and upload:
-   ```bash
-   pio run --target upload
-   ```
+Configure your credentials:
+
+```cpp
+#define WIFI_SSID      "YOUR_WIFI_SSID"
+#define WIFI_PASSWORD  "YOUR_WIFI_PASSWORD"
+
+#define NB_API_TOKEN   "YOUR_API_TOKEN"
+#define NB_USER_KEY    "YOUR_USER_KEY"
+#define NB_DEVICE_CODE "YOUR_DEVICE_CODE"
+```
+
+Build and upload
+
+```bash
+pio run --target upload
+```
 
 ## Project Structure
 

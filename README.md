@@ -2,7 +2,7 @@
 ![ESP32](https://img.shields.io/badge/ESP32-blue)
 ![Arduino](https://img.shields.io/badge/Arduino-00979D)
 ![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-C51A4A)
-![License](https://img.shields.io/github/license/mindeon/NotifyBridge-Devices)
+![License](https://img.shields.io/github/license/mindeon/NotifyBridge-Devices?cacheSeconds=60)
 
 # NotifyBridge Devices
 Turn any microcontroller into a push notification device.

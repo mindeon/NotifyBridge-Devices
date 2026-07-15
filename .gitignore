@@ -1,1 +1,10 @@
 NotifyBridge-Devices.code-workspace
+
+# Local checkouts of the split-out per-device repos (not part of this repo)
+NotifyBridge-ESP32/
+NotifyBridge-MKR1010/
+NotifyBridge-NANO-RP2040/
+NotifyBridge-RPi-PicoW/
+NotifyBridge-RPi-Pico2W/
+NotifyBridge-LoPy-PySense/
+NotifyBridge-LoPy-PyTrack/
